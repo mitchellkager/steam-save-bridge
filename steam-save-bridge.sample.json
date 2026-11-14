@@ -1,0 +1,29 @@
+{
+  "source": {
+    "name": "partner-a",
+    "username": "PARTNER_A_STEAM_USERNAME",
+    "password": "PARTNER_A_STEAM_PASSWORD",
+    "session_dir": "./sessions"
+  },
+  "target": {
+    "name": "partner-b",
+    "username": "PARTNER_B_STEAM_USERNAME",
+    "password": "PARTNER_B_STEAM_PASSWORD",
+    "session_dir": "./sessions"
+  },
+  "rules": {
+    "default": "sync",
+    "allow": [],
+    "deny": [],
+    "names": {
+      "271590": "Hades"
+    }
+  },
+  "notify": {
+    "kind": "discord",
+    "webhook_url": "https://discord.com/api/webhooks/REPLACE/ME"
+  },
+  "app_ids": [271590],
+  "poll_interval_seconds": 300,
+  "state_path": "./sync_state.json"
+}
