@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import pickle
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -52,6 +53,7 @@ class SteamAccount:
 
         self._executor_cls = LoginExecutor
         self._executor: Optional[object] = None
+        self._steam_id: str = ""
 
     # ------------------------------------------------------------------ #
     # construction / persistence
@@ -94,6 +96,91 @@ class SteamAccount:
         self._persist()
         logger.info("logged in '%s' (steam_id=%s)", self.name, self.steam_id)
         return self
+
+    def login_qr(self, *, device_name: str = "steam-save-bridge") -> "SteamAccount":
+        """Login via Steam Guard QR code (no password required).
+
+        Renders a QR code (or prints the challenge URL) for the user to scan
+        with the Steam mobile app. Polls until the user confirms, then
+        finalizes the web session exactly like the password path. No password
+        is ever required.
+        """
+        from steampy import LoginExecutor  # type: ignore
+
+        executor = LoginExecutor(
+            username="", password="", shared_secret="", session=requests.Session()
+        )
+        self._executor = executor
+
+        # Start the QR auth session (pre-auth endpoint, no token needed).
+        qr = executor.session.post(
+            "https://api.steampowered.com/IAuthenticationService/"
+            "BeginAuthSessionViaQR/v1",
+            json={"device_details": {
+                "device_friendly_name": device_name,
+                "platform_type": 2,
+                "os_type": 20,
+            }},
+        ).json()
+        client_id = qr.get("client_id")
+        request_id = qr.get("request_id")
+        challenge_url = qr.get("challenge_url")
+        if not (client_id and request_id and challenge_url):
+            raise AuthError(
+                f"BeginAuthSessionViaQR did not return the expected fields: {qr}"
+            )
+
+        self._render_qr(challenge_url)
+        print("Scan the QR code with the Steam mobile app (or open the URL on your phone).")
+        print("Waiting for confirmation...")
+
+        self._poll_for_tokens(executor, client_id, request_id)
+        if "sessionid" not in executor.session.cookies:
+            raise AuthError(
+                "QR login: no sessionid cookie after polling; Steam did not mint "
+                "the web session. Try the password path instead."
+            )
+        self._complete_login(executor)
+        self._persist()
+        logger.info("logged in '%s' via QR (steam_id=%s)", self.name, self.steam_id)
+        return self
+
+    def _poll_for_tokens(self, executor, client_id: str, request_id: str) -> None:
+        """Poll ``PollAuthSessionStatus`` until the refresh token is present."""
+        while True:
+            poll = executor.session.post(
+                "https://api.steampowered.com/IAuthenticationService/"
+                "PollAuthSessionStatus/v1",
+                data={"client_id": client_id, "request_id": request_id},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            ).json()
+            if poll.get("refresh_token"):
+                executor.refresh_token = poll["refresh_token"]
+                return
+            time.sleep(max(0.5, float(poll.get("interval", 1.0))))
+
+    def _complete_login(self, executor) -> None:
+        """Finalize the login, perform the web redirects, and capture the
+        SteamID. Shared by the password, QR, and refresh paths."""
+        finalized = executor._finalize_login()
+        resp = finalized.json()
+        executor._perform_redirects(resp)
+        executor.set_sessionid_cookies()
+        self._steam_id = resp.get("steamID", "") or self._steam_id
+
+    def _render_qr(self, url: str) -> None:
+        """Render a QR code for the user to scan, falling back to printing the
+        URL when the optional ``qrcode`` module is not installed."""
+        try:
+            import qrcode  # type: ignore
+        except ImportError:
+            print("\n  (qrcode module not installed — scan manually via URL)\n")
+            print(f"  {url}\n")
+            return
+        qr = qrcode.QRCode(border=1)
+        qr.add_data(url)
+        qr.make()
+        qr.print_ascii(invert=True)
 
     def _persist(self) -> None:
         if not self.session_file:
@@ -158,9 +245,7 @@ class SteamAccount:
         if self._executor is None:
             raise AuthError(f"no executor for '{self.name}'; call login() first")
         try:
-            finalized = self._executor._finalize_login()
-            self._executor._perform_redirects(finalized.json())
-            self._executor.set_sessionid_cookies()
+            self._complete_login(self._executor)
         except Exception:
             self._refresh_via_token()
         return self
@@ -181,15 +266,8 @@ class SteamAccount:
         client_id = response['client_id']
         request_id = response['request_id']
 
-        poll = self._executor._api_call(
-            'POST', 'IAuthenticationService', 'PollAuthSessionStatus',
-            params={'client_id': client_id, 'request_id': request_id},
-        )
-        self._executor.refresh_token = poll.json()['response']['refresh_token']
-
-        finalized = self._executor._finalize_login()
-        self._executor._perform_redirects(finalized.json())
-        self._executor.set_sessionid_cookies()
+        self._poll_for_tokens(self._executor, client_id, request_id)
+        self._complete_login(self._executor)
 
     @property
     def session(self) -> "requests.Session":
@@ -203,8 +281,17 @@ class SteamAccount:
         """The 64-bit SteamID of this account, if known."""
         if self._executor is None:
             return None
-        # steampy stores it on the executor after a successful login.
-        return getattr(self._executor, "steam_id", None)
+        if self._steam_id:
+            return self._steam_id
+        # Fall back to extracting from the steamLoginSecure cookie
+        # (format: steamLoginSecure=<steamid>|<hash>).
+        try:
+            cookie = self._executor.session.cookies.get("steamLoginSecure", "")
+            if cookie:
+                return cookie.split("|")[0]
+        except Exception:  # pragma: no cover - defensive
+            pass
+        return None
 
     def is_logged_in(self) -> bool:
         """Cheap liveness check: does the session carry a sessionid cookie?"""

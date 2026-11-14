@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 import time
 from typing import List, Optional
 
@@ -72,6 +73,20 @@ def _engine_from_cfg(cfg: dict) -> SyncEngine:
 # subcommand handlers
 # ---------------------------------------------------------------------- #
 def cmd_login(args: argparse.Namespace) -> int:
+    if args.qr:
+        acct = SteamAccount(
+            name=args.name or "qr-account",
+            username="",
+            password="",
+            session_dir=args.session_dir,
+        )
+        acct.login_qr(device_name=args.name or "steam-save-bridge")
+        acct.save()
+        print(f"logged in via QR and saved session: {acct.name}")
+        return 0
+    if not args.username or not args.password:
+        print("error: --username and --password are required (or use --qr)", file=sys.stderr)
+        return 2
     acct = SteamAccount(
         name=args.name or args.username,
         username=args.username,
@@ -149,10 +164,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("login", help="authenticate and persist one account")
-    p.add_argument("--username", required=True)
-    p.add_argument("--password", required=True)
+    p.add_argument("--username", default="")
+    p.add_argument("--password", default="")
     p.add_argument("--name", default=None, help="friendly account name")
     p.add_argument("--two-factor", default=None, help="manual Steam Guard code")
+    p.add_argument("--qr", action="store_true",
+                   help="login via Steam Guard QR code (no password required)")
     p.add_argument("--session-dir", default=".")
     p.set_defaults(func=cmd_login)
 
