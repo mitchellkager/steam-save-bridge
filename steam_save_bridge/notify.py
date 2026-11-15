@@ -75,8 +75,8 @@ class ScriptNotifier(Notifier):
         self.timeout = timeout
 
     def notify(self, event: str, payload: Dict[str, Any]) -> None:
-        body = json.dumps({"event": event, **payload}, default=str)
         try:
+            body = json.dumps({"event": event, **payload}, default=str)
             subprocess.run(
                 self.command,
                 input=body.encode("utf-8"),
