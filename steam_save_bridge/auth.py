@@ -54,6 +54,7 @@ class SteamAccount:
         self._executor_cls = LoginExecutor
         self._executor: Optional[object] = None
         self._steam_id: str = ""
+        self._cloud_client: Optional[object] = None
 
     # ------------------------------------------------------------------ #
     # construction / persistence
@@ -302,3 +303,17 @@ class SteamAccount:
             return bool(session.cookies.get("sessionid"))
         except Exception:  # pragma: no cover - defensive
             return False
+
+    @property
+    def cloud_client(self) -> "object":
+        """A :class:`CloudClient` bound to this account's live session.
+
+        Cached, and always valid across refreshes because the client reads
+        ``account.session`` dynamically at call time. Imported lazily to avoid
+        a circular import (``cloud`` imports ``auth``).
+        """
+        if self._cloud_client is None:
+            from .cloud import CloudClient  # type: ignore
+
+            self._cloud_client = CloudClient(self)
+        return self._cloud_client

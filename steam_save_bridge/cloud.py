@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import requests
 
@@ -70,6 +70,7 @@ class CloudClient:
         self.account = account
         self.api_base = api_base.rstrip("/")
         self.timeout = timeout
+        self._app_ids: Set[int] = set()
 
     # ------------------------------------------------------------------ #
     # low-level
@@ -142,6 +143,7 @@ class CloudClient:
                 "run --probe to inspect the raw response"
             )
 
+        self._app_ids.add(app_id)
         return self._parse_save_list(app_id, data)
 
     @staticmethod
@@ -170,6 +172,10 @@ class CloudClient:
             raw_list = data
 
         return [CloudSave.from_api(app_id, r) for r in raw_list]
+
+    def list_app_ids(self) -> List[int]:
+        """App IDs seen so far (best-effort; configure explicitly for the daemon)."""
+        return sorted(self._app_ids)
 
     def get_save_file(self, save: CloudSave) -> bytes:
         """Download the bytes of ``save`` via ``GetCloudSaveFile``."""
