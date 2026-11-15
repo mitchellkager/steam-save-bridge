@@ -47,9 +47,10 @@ class SteamAccount:
     session_file: str = ""
 
     def __post_init__(self) -> None:
-        # Import here so that importing the package does not hard-require
-        # steampy until an account is actually used.
-        from steampy import LoginExecutor  # type: ignore
+        # Import from the submodule: the installed steampy build may have an
+        # empty top-level __init__.py, so `from steampy import LoginExecutor`
+        # can fail even though steampy.login.LoginExecutor exists.
+        from steampy.login import LoginExecutor  # type: ignore
 
         self._executor_cls = LoginExecutor
         self._executor: Optional[object] = None
@@ -106,7 +107,7 @@ class SteamAccount:
         finalizes the web session exactly like the password path. No password
         is ever required.
         """
-        from steampy import LoginExecutor  # type: ignore
+        from steampy.login import LoginExecutor  # type: ignore
 
         executor = LoginExecutor(
             username="", password="", shared_secret="", session=requests.Session()
@@ -123,9 +124,12 @@ class SteamAccount:
                 "os_type": 20,
             }},
         ).json()
-        client_id = qr.get("client_id")
-        request_id = qr.get("request_id")
-        challenge_url = qr.get("challenge_url")
+        # The fields may be at the top level or wrapped in a "response" object
+        # (BeginAuthSessionViaQR wraps them); handle both shapes.
+        data = qr.get("response") or qr
+        client_id = data.get("client_id")
+        request_id = data.get("request_id")
+        challenge_url = data.get("challenge_url")
         if not (client_id and request_id and challenge_url):
             raise AuthError(
                 f"BeginAuthSessionViaQR did not return the expected fields: {qr}"
@@ -155,10 +159,13 @@ class SteamAccount:
                 data={"client_id": client_id, "request_id": request_id},
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             ).json()
-            if poll.get("refresh_token"):
-                executor.refresh_token = poll["refresh_token"]
+            # PollAuthSessionStatus may return the fields at the top level or
+            # wrapped in a "response" object; handle both shapes.
+            data = poll.get("response") or poll
+            if data.get("refresh_token"):
+                executor.refresh_token = data["refresh_token"]
                 return
-            time.sleep(max(0.5, float(poll.get("interval", 1.0))))
+            time.sleep(max(0.5, float(data.get("interval", 1.0))))
 
     def _complete_login(self, executor) -> None:
         """Finalize the login, perform the web redirects, and capture the
