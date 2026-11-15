@@ -91,8 +91,8 @@ def cmd_login(args: argparse.Namespace) -> None:
 
 
 def cmd_list(args: argparse.Namespace) -> None:
-    name = args.name or args.username
-    session_file = _session_file(args.session_dir, args.name, args.username)
+    name = args.name
+    session_file = _session_file(args.session_dir, args.name, "")
     acct = SteamAccount.load(name, session_file)
     acct.refresh()
     client = acct.cloud_client
@@ -148,8 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_login)
 
     p = sub.add_parser("list", help="List cloud saves for an app (verifies the cloud client works).")
-    p.add_argument("--username", required=True)
-    p.add_argument("--name", help="Friendly name (default: the username).")
+    p.add_argument("--name", required=True, help="Friendly name of the account (matches the config).")
     p.add_argument("--session-dir", default=".")
     p.add_argument("--app-id", type=int, required=True)
     p.set_defaults(func=cmd_list)
